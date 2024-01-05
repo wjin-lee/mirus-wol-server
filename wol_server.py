@@ -25,18 +25,21 @@ logger.setLevel(logging.DEBUG)
 
 logfile_handler = RotatingFileHandler(LOG_FILE, maxBytes=MAX_LOG_FILE_SIZE)
 logfile_handler.setLevel(logging.DEBUG)
-logfile_handler.setFormatter(logging.Formatter('%(asctime)s: [%(levelname)s] %(message)s'))
+logfile_handler.setFormatter(
+    logging.Formatter("%(asctime)s: [%(levelname)s] %(message)s")
+)
 logger.addHandler(logfile_handler)
 
 
 class PowerState(Enum):
-    UNKNOWN = -1,
-    OFFLINE = 0,
+    UNKNOWN = (-1,)
+    OFFLINE = (0,)
     ONLINE = 1
 
+
 class RequestType(Enum):
-    WAKE_ON_LAN = "WAKE_ON_LAN",
-    DEVICE_STATUS_UPDATE = "DEVICE_STATUS_UPDATE",
+    WAKE_ON_LAN = ("WAKE_ON_LAN",)
+    DEVICE_STATUS_UPDATE = ("DEVICE_STATUS_UPDATE",)
 
     def strToRequestType(string: str):
         if string == "WAKE_ON_LAN":
@@ -46,9 +49,10 @@ class RequestType(Enum):
         else:
             raise ValueError(f"Cannot convert '{string}' into a RequestType!")
 
+
 class RequestStatus(Enum):
-    QUEUED = 0,
-    PROCESSING = 1,
+    QUEUED = (0,)
+    PROCESSING = (1,)
     COMPLETED = 2
 
     def intToRequestStatus(value: int):
@@ -61,11 +65,13 @@ class RequestStatus(Enum):
         else:
             raise ValueError(f"Cannot convert '{value}' into a RequestStatus!")
 
+
 class WakeOnLanTarget:
     def __init__(self, name, ip, mac):
         self.name = name
         self.ip = ip  # Static IP used to check if device is online
         self.mac = mac
+
 
 class WakeOnLanRequest:
     def __init__(self, timestamp: int, device: str, status: int, type: str):
@@ -83,16 +89,19 @@ def is_device_online(device: WakeOnLanTarget):
     operating_system = platform.system()
     try:
         if operating_system == "Windows":
-            _ = subprocess.check_output(["ping", "-n", "1", device.ip])
+            result = subprocess.check_output(["ping", "-n", "1", "-w", "1", device.ip])
         elif operating_system == "Linux":
-            _ = subprocess.check_output(["ping", "-c", "1", device.ip])
+            result = subprocess.check_output(["ping", "-c", "1", "-W", "1", device.ip])
         else:
             raise Exception(f"Unsupported operating system: {operating_system}")
 
-        return True
-    
+        # ping returns exit code 0 even when the host unreachable as destination is in local subnet.
+        # An additional check is required to see if it failed or not.
+        return str(result).lower().find("ttl") != -1
+
     except subprocess.CalledProcessError:
         return False
+
 
 def send_wol_packet(wol_target: WakeOnLanTarget) -> None:
     magic_packet = b"".join([b"\xFF\xFF\xFF\xFF\xFF\xFF"] + [wol_target.mac] * 16)
@@ -103,7 +112,7 @@ def send_wol_packet(wol_target: WakeOnLanTarget) -> None:
         s.sendto(magic_packet, (BROADCAST_ADDR, UDP_PORT))
 
 
-class WakeOnLanServer():
+class WakeOnLanServer:
     wol_targets = {}  # Maps wol target name to instance
     requests = {}  # Stores actual information on requests
     requestQueue = queue.Queue()  # List of IDs to process
@@ -111,13 +120,17 @@ class WakeOnLanServer():
     def register_wol_target(self, wol_target: WakeOnLanTarget):
         """Registers a Wake-on-Lan target with the server"""
         self.wol_targets[wol_target.name] = wol_target
-        logger.info(f"Registered ({wol_target.name}, {wol_target.ip}, {wol_target.mac})")
+        logger.info(
+            f"Registered ({wol_target.name}, {wol_target.ip}, {wol_target.mac})"
+        )
 
     def get_device_power_state(self, device: WakeOnLanTarget) -> PowerState:
         """Determines a device's power state"""
         return PowerState.ONLINE if is_device_online(device) else PowerState.OFFLINE
 
-    def update_device_power_state(self, device: WakeOnLanTarget, power_state: PowerState) -> None:
+    def update_device_power_state(
+        self, device: WakeOnLanTarget, power_state: PowerState
+    ) -> None:
         """Updates a device's power state on the RTDB"""
 
         ref = db.reference(f"powerStates/{device.name}")
@@ -128,14 +141,14 @@ class WakeOnLanServer():
         """Updates a requests status.
         NOTE: Completed orders are deleted.
         """
-        
+
         if status == RequestStatus.PROCESSING:
             logger.debug(f"PROCESSING {requestId}")
             ref = db.reference(f"requests/{requestId}/status")
             ref.set(status.value)
             self.requests[requestId].status = RequestStatus.PROCESSING
             logger.info(f"Updated {requestId}'s power state to be {status}")
-        
+
         elif status == RequestStatus.COMPLETED:
             # Delete to conserve space
             logger.debug(f"DELETE {requestId}")
@@ -145,7 +158,9 @@ class WakeOnLanServer():
             logger.info(f"Updated {requestId}'s power state to be {status}")
 
         else:
-            logger.warning(f"Invalid request progress '{status}' encountered during update")
+            logger.warning(
+                f"Invalid request progress '{status}' encountered during update"
+            )
 
     def handle_request(self):
         """Process incoming requests"""
@@ -160,13 +175,17 @@ class WakeOnLanServer():
                 if request.type == RequestType.WAKE_ON_LAN:
                     logger.info(f"Broadcasting WoL packet to {device.name}")
                     send_wol_packet(device)
-                
+
                 elif request.type == RequestType.DEVICE_STATUS_UPDATE:
                     logger.info(f"Updating power state info for {device.name}")
-                    self.update_device_power_state(device, self.get_device_power_state(device))
-                
+                    self.update_device_power_state(
+                        device, self.get_device_power_state(device)
+                    )
+
                 else:
-                    logger.warning(f"Invalid request type '{request.type}' encountered!")
+                    logger.warning(
+                        f"Invalid request type '{request.type}' encountered!"
+                    )
 
             except Exception as e:
                 logger.critical(str(e))
@@ -178,18 +197,24 @@ class WakeOnLanServer():
 
     def on_request(self, events: Event):
         """Add incoming requests to the queue.
-        
+
         NOTE: Will also be invoked at least once an hour either by network dropout or credential expiration!
         """
         logger.info(f"Received: {events.event_type}, {events.path}, {events.data}")
         changed = {}
-        if events.path == "/":  # format is {'-NiNTdZWLeBH4hBlgbW-': {...}, '-NiNUGQ8CCYNUaxKwB-6': {...}}
+        if (
+            events.path == "/"
+        ):  # format is {'-NiNTdZWLeBH4hBlgbW-': {...}, '-NiNUGQ8CCYNUaxKwB-6': {...}}
             changed = events.data or {}
 
-        elif len(events.path) == 21:  # format is {...} with the ID contained in the path
+        elif (
+            len(events.path) == 21
+        ):  # format is {...} with the ID contained in the path
             if events.data:
                 changed = {
-                    events.path[1:]: events.data  # Path has a leading / we must remove for the id
+                    events.path[
+                        1:
+                    ]: events.data  # Path has a leading / we must remove for the id
                 }
         else:
             logger.info("No conditions matched. Ignoring...")
@@ -197,7 +222,12 @@ class WakeOnLanServer():
         for requestId, reqData in changed.items():
             if requestId not in self.requests:
                 # If it's not a duplicate, add to request queue
-                self.requests[requestId] = WakeOnLanRequest(reqData["timestamp"], reqData["device"], reqData["status"], reqData["type"])
+                self.requests[requestId] = WakeOnLanRequest(
+                    reqData["timestamp"],
+                    reqData["device"],
+                    reqData["status"],
+                    reqData["type"],
+                )
                 self.requestQueue.put(requestId)
 
     def run(self):
@@ -217,23 +247,30 @@ class WakeOnLanServer():
 
 def main(service_acc_cert_path):
     wol_server = WakeOnLanServer()
-    wol_server.register_wol_target(WakeOnLanTarget("orcinus", "192.168.20.205", b"\x04\x7C\x16\xBB\x5D\xA0"))
-    
+    wol_server.register_wol_target(
+        WakeOnLanTarget("orcinus", "192.168.20.205", b"\x04\x7C\x16\xBB\x5D\xA0")
+    )
+
     # Connect to Firebase via Admin SDK
     cred = credentials.Certificate(service_acc_cert_path)
-    firebase_admin.initialize_app(cred, {
-        'databaseURL': 'https://mirus-remote-default-rtdb.asia-southeast1.firebasedatabase.app'
-    })
+    firebase_admin.initialize_app(
+        cred,
+        {
+            "databaseURL": "https://mirus-remote-default-rtdb.asia-southeast1.firebasedatabase.app"
+        },
+    )
 
     wol_server.run()
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        prog='Mirus WoL Server',
-        description='Processes WoL-related requests from Mirus Remote.'
+        prog="Mirus WoL Server",
+        description="Processes WoL-related requests from Mirus Remote.",
     )
-    parser.add_argument('service_acc_cert_path', help="e.g. path/to/serviceAccountKey.json") 
+    parser.add_argument(
+        "service_acc_cert_path", help="e.g. path/to/serviceAccountKey.json"
+    )
     args = parser.parse_args()
 
     try:
@@ -242,4 +279,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.critical(str(e))
         logger.debug(traceback.format_exc())
-
