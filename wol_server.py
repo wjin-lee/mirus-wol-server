@@ -32,8 +32,8 @@ logger.addHandler(logfile_handler)
 
 
 class PowerState(Enum):
-    UNKNOWN = (-1,)
-    OFFLINE = (0,)
+    UNKNOWN = -1
+    OFFLINE = 0
     ONLINE = 1
 
 
