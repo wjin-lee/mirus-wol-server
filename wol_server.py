@@ -1,3 +1,4 @@
+import time
 import datetime
 from enum import Enum
 import platform
@@ -18,6 +19,7 @@ UDP_PORT = 9  # Discard service port
 LOG_FILE = "wol_server.log"
 MAX_LOG_FILE_SIZE = 50000000  # Bytes
 BROADCAST_ADDR = "255.255.255.255"
+AUTO_RESTART_DELAY = 60  # seconds
 
 # Logger Setup
 logger = logging.getLogger("wol_server_logger")
@@ -273,9 +275,12 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    try:
-        main(args.service_acc_cert_path)
+    while True:
+        try:
+            main(args.service_acc_cert_path)
 
-    except Exception as e:
-        logger.critical(str(e))
-        logger.debug(traceback.format_exc())
+        except Exception as e:
+            logger.critical(str(e))
+            logger.debug(traceback.format_exc())
+
+        time.sleep(AUTO_RESTART_DELAY)
